@@ -99,12 +99,16 @@ def init():
           flex_number TEXT,
           updated_at TEXT
         );
-        CREATE TABLE IF NOT EXISTS call_log (
+        CREATE TABLE IF NOT EXISTS quote_cards (
           id INTEGER PRIMARY KEY,
-          name TEXT,
-          note TEXT,
-          user_name TEXT,
-          at TEXT
+          name TEXT NOT NULL,
+          phone TEXT,
+          email TEXT,
+          event_month TEXT,
+          notes TEXT,
+          owner TEXT,
+          stage TEXT NOT NULL,
+          priority INTEGER DEFAULT 0
         );
         """
     )
@@ -123,6 +127,22 @@ def init():
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('flex_api_key', ?)",
             (os.environ.get("FLEX_API_KEY", ""),),
+        )
+    if not conn.execute("SELECT 1 FROM quote_cards").fetchone():
+        cards = [
+            ("VLI", "", "", "", "Truss corners and bases", "Justin", "Needs quote", 1),
+            ("Louder Exp - Molly Martin", "214.578.9655", "molly@louderexp.com", "Nov 2026", "Truss set up for xmas", "Justin", "Needs quote", 2),
+            ("Firebaugh High School", "559.659.1415", "", "", "30 panel wall and curriculum", "Justin", "Needs quote", 3),
+            ("Light the Night - Las Vegas", "516.650.3896", "Lisa.Brunenbraber@bloodcancerunited.org", "November 2026", "Light the Night Vegas", "Justin", "Quoted", 0),
+            ("AZ Video", "480.861.2001", "info@az-video.com", "October 2026", "Paulden AZ - 16x12 stage, Audio, 16x10 video wall", "Justin", "Quoted", 0),
+            ("DDP Worldwide", "480.440.3264", "dpetty@ddpworldwide.com", "December 2026", "Rawhide SL100, Audio, Lighting, JBL 6 per side and video", "Justin", "Quoted", 0),
+            ("Jim Woodling", "", "", "", "", "Justin", "Quoted", 0),
+            ("Supreme Cheer and Tumble", "480.462.6821", "info@supremecheertumble.com", "Nov 2026", "Sound, DJ Set Up, Lighting, PnD", "Justin", "Confirmed", 0),
+            ("EKIN", "", "", "", "Finish quote and send", "Justin", "Cancelled", 0),
+        ]
+        conn.executemany(
+            "INSERT INTO quote_cards (name, phone, email, event_month, notes, owner, stage, priority) VALUES (?,?,?,?,?,?,?,?)",
+            cards,
         )
     conn.commit()
     conn.close()
@@ -205,7 +225,8 @@ PAGE = r"""<!DOCTYPE html>
 button,input,select,textarea { font-family:inherit; color:inherit; } button { cursor:pointer; }
 .app { display:grid; grid-template-columns:240px 1fr; min-height:100vh; }
 .side { background:#fff; border-right:1px solid var(--line); padding:18px 14px; display:flex; flex-direction:column; gap:16px; }
-.brand img { height:46px; width:auto; display:block; }
+.brand img { height:28px; width:auto; max-width:150px; object-fit:contain; display:block; }
+.crm-label { color:var(--blue); font-size:22px; font-weight:750; letter-spacing:.08em; margin:6px 0 0; }
 nav button, .ghost, .primary, .danger { border:1px solid var(--line); background:#fff; color:var(--steel); border-radius:10px; padding:9px 12px; font-weight:600; }
 nav { display:flex; flex-direction:column; gap:4px; } nav button { text-align:left; } nav button.on, nav button:hover { background:var(--bg3); color:var(--blue); border-color:#b9ddff; }
 .primary { background:var(--blue); color:#fff; border-color:var(--blue); } .danger { color:var(--danger); }
@@ -259,12 +280,11 @@ function render() {
   if (!me) { root.append(login()); return; }
   const shell = document.createElement("div");
   shell.className = "app";
-  shell.innerHTML = `<aside class="side"><div class="brand"><img src="https://showbossav.com/wp-content/uploads/2025/11/SB-Refresh-Logos_Blue-Shade-Black-Fly-scaled.png" alt="ShowBoss AV"></div>
+  shell.innerHTML = `<aside class="side"><div class="brand"><img src="https://showbossav.com/wp-content/uploads/2025/11/SB-Refresh-Logos_Blue-Shade-Black-Fly-scaled.png" alt="ShowBoss AV"><div class="crm-label">CRM</div></div>
     <nav>
       <button data-v="dash" class="${view==='dash'?'on':''}">Dashboard</button>
-      <button data-v="inquiry" class="${view==='inquiry'?'on':''}">Inquiry leads</button>
-      <button data-v="calls" class="${view==='calls'?'on':''}">Call list</button>
       <button data-v="pipe" class="${view==='pipe'?'on':''}">Pipeline</button>
+      <button data-v="flow" class="${view==='flow'?'on':''}">Quote Flow</button>
       <button data-v="accounts" class="${view==='accounts'?'on':''}">Accounts</button>
       <button data-v="flex" class="${view==='flex'?'on':''}">Flex</button>
       <button data-v="settings" class="${view==='settings'?'on':''}">Settings</button>
@@ -276,12 +296,11 @@ function render() {
   shell.querySelector("#logout").onclick = async () => { await fetch("/api/logout", {method:"POST"}); me = null; render(); };
   shell.querySelector("#newDeal").onclick = () => dealForm();
   const viewEl = shell.querySelector("#view");
-  const titles = {dash:"Dashboard", inquiry:"Inquiry leads", calls:"Call list", pipe:"Pipeline", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
+  const titles = {dash:"Dashboard", pipe:"Pipeline", flow:"Quote Flow", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
   shell.querySelector("#ttl").textContent = titles[view];
   if (view === "dash") viewEl.append(dash());
-  if (view === "inquiry") inquiryView(viewEl);
-  if (view === "calls") callsView(viewEl);
-  if (view === "pipe") viewEl.append(pipeline());
+  if (view === "pipe") pipeHub(viewEl);
+  if (view === "flow") quoteFlow(viewEl);
   if (view === "accounts") viewEl.append(accounts());
   if (view === "flex") flexView(viewEl);
   if (view === "settings") settingsView(viewEl);
@@ -345,6 +364,47 @@ function pipeline() {
   });
   return el;
 }
+function pipeHub(el) {
+  el.innerHTML = `<div class="seg"><button class="ghost on" data-t="inquiry">Inquiry Status</button><button class="ghost" data-t="quiet">Quiet</button></div><div id="pane"></div>`;
+  const pane = el.querySelector("#pane");
+  const show = (t) => { el.querySelectorAll("[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t===t)); pane.innerHTML=""; if (t==="inquiry") inquiryView(pane); else callsView(pane); };
+  el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => show(b.dataset.t));
+  show("inquiry");
+}
+const FLOW = ["Needs quote", "Quoted", "Confirmed", "Cancelled"];
+async function quoteFlow(el) {
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div class="sub">Needs quote, then quoted, then confirmed or cancelled.</div><button class="primary" id="addCard">+ New client card</button></div><div class="board" id="flow"></div>`;
+  const board = el.querySelector("#flow");
+  let cards = [];
+  try { cards = (await api("/api/quotes")).cards || []; } catch (e) { board.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  FLOW.forEach(stage => {
+    const mine = cards.filter(c => c.stage === stage);
+    const col = document.createElement("div");
+    col.className = "col";
+    col.innerHTML = `<div class="head"><strong>${stage}</strong><span class="sub">${mine.length}</span></div><div class="cards" data-stage="${stage}"></div>`;
+    const box = col.querySelector(".cards");
+    mine.forEach(c => {
+      const card = $(`<article class="deal" draggable="true"><div class="sub">Assigned to ${esc(c.owner||"")}</div><strong>${esc(c.name)}</strong><div>${esc(c.phone||"")}</div><div><a href="mailto:${esc(c.email||"")}">${esc(c.email||"")}</a></div><div class="sub">${esc(c.event_month||"")}</div><div>${esc(c.notes||"")}</div><button class="ghost" data-del="${c.id}">Delete</button></article>`);
+      card.ondragstart = (e) => e.dataTransfer.setData("text/plain", String(c.id));
+      box.append(card);
+    });
+    box.ondragover = (e) => e.preventDefault();
+    box.ondrop = async (e) => { e.preventDefault(); await api("/api/quotes/"+e.dataTransfer.getData("text/plain")+"/stage", {method:"POST", body:{stage: box.dataset.stage}}); quoteFlow(el); };
+    board.append(col);
+  });
+  board.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { await api("/api/quotes/"+b.dataset.del, {method:"DELETE"}); quoteFlow(el); });
+  el.querySelector("#addCard").onclick = () => {
+    const box = $(`<div class="modal"><form class="box" id="f"><h3>New client card</h3>
+      <label>Name<input name="name" required></label>
+      <div class="row"><label>Phone<input name="phone"></label><label>Email<input name="email"></label></div>
+      <div class="row"><label>Month<input name="event_month" placeholder="Nov 2026"></label><label>Stage<select name="stage">${FLOW.map(s=>`<option>${s}</option>`).join("")}</select></label></div>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <button class="primary">Save</button> <button type="button" class="ghost" id="x">Cancel</button></form></div>`);
+    box.querySelector("#x").onclick = () => box.remove();
+    box.querySelector("#f").onsubmit = async (e) => { e.preventDefault(); await api("/api/quotes", {method:"POST", body:Object.fromEntries(new FormData(e.target))}); box.remove(); quoteFlow(el); };
+    document.body.append(box);
+  };
+}
 async function inquiryView(el) {
   el.innerHTML = `<div class="card" style="padding:14px"><h3 style="margin-top:0">Quotes in inquiry</h3><p class="sub">Pulled from Flex. These are the leads to work.</p><div id="rows">Loading…</div></div>`;
   try {
@@ -381,33 +441,45 @@ function accounts() {
 async function flexView(el) {
   el.innerHTML = `<div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Search Flex</h3>
     <div class="seg">
-      <button class="ghost on" data-k="all">All</button>
-      <button class="ghost" data-k="contact">Contacts</button>
-      <button class="ghost" data-k="job">Jobs</button>
-      <button class="ghost" data-k="po">POs</button>
+      <button class="ghost on" data-k="contact">Contact</button>
+      <button class="ghost" data-k="show">Show / Quote #</button>
+      <button class="ghost" data-k="spo">SPO's</button>
+      <button class="ghost" data-k="rpo">RPO's</button>
     </div>
-    <div class="row"><input id="q" placeholder="Client, contact, job, or PO"><button class="primary" id="go">Search</button></div>
-    <p class="sub">One search checks contacts, jobs, and purchase orders in Flex.</p>
+    <div class="row"><input id="q" placeholder="Company, person, quote number, SPO, or RPO"><button class="primary" id="go">Search</button></div>
     <div id="hits"></div></div>`;
-  let kind = "all";
+  let kind = "contact";
   el.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
     kind = b.dataset.k;
     el.querySelectorAll("[data-k]").forEach(x => x.classList.toggle("on", x === b));
+    if (el.querySelector("#q").value) el.querySelector("#go").click();
   });
   el.querySelector("#go").onclick = async () => {
     const hits = el.querySelector("#hits");
-    hits.textContent = "Searching contacts, jobs, and POs…";
+    hits.textContent = "Searching…";
     try {
       const res = await api("/api/flex/search?q=" + encodeURIComponent(el.querySelector("#q").value) + "&kind=" + kind);
       const rows = res.records || [];
-      hits.innerHTML = rows.length ? "" : `<div class="sub">No matches.</div><pre class="sub">${esc(JSON.stringify(res.attempts || [], null, 2))}</pre>`;
+      hits.innerHTML = rows.length ? "" : `<div class="sub">No matches in this tab.</div>`;
       rows.forEach(r => {
-        const row = $(`<div class="flex-hit"><div><span class="pill">${esc(r.group || r.kind || "")}</span> <strong>${esc(r.name || "Record")}</strong><div class="sub">${esc(r.documentNumber || r.id || "")}</div></div><button class="ghost">Link to new deal</button></div>`);
-        row.querySelector("button").onclick = () => dealForm({ name: r.name || "Flex job", flex_id: r.id, flex_number: r.documentNumber || "", value: r.budgetedRevenue || 0 });
+        const row = $(`<div class="flex-hit"><div><span class="pill">${esc(r.group||"")}</span> <strong>${esc(r.name||"Record")}</strong><div class="sub">${esc(r.documentNumber||r.id||"")}</div></div><button class="ghost">${kind==="contact"?"Open contact":"Link to new deal"}</button></div>`);
+        row.querySelector("button").onclick = () => kind==="contact" ? openContact(r.id, r.name) : dealForm({ name: r.name, flex_id: r.id, flex_number: r.documentNumber||"" });
+        if (kind==="contact") row.querySelector("strong").onclick = () => openContact(r.id, r.name);
         hits.append(row);
       });
     } catch (e) { hits.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   };
+}
+async function openContact(id, name) {
+  const box = $(`<div class="modal"><div class="box"><h3>${esc(name||"Contact")}</h3><div id="body">Loading…</div><button class="ghost" id="x">Close</button></div></div>`);
+  box.querySelector("#x").onclick = () => box.remove();
+  document.body.append(box);
+  try {
+    const c = await api("/api/flex/contact/" + id);
+    const phone = c.phone || "";
+    const email = c.email || "";
+    box.querySelector("#body").innerHTML = `<div class="kv"><span>Company</span><div>${esc(c.company||"—")}</div><span>Phone</span><div>${phone?`<a href="tel:${esc(phone)}">${esc(phone)}</a>`:"—"}</div><span>Email</span><div>${email?`<a href="mailto:${esc(email)}">${esc(email)}</a>`:"—"}</div></div>`;
+  } catch (e) { box.querySelector("#body").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 async function settingsView(el) {
   const s = await api("/api/settings");
@@ -755,6 +827,70 @@ async def call_log(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/quotes")
+def quotes(request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    conn = db()
+    rows = conn.execute("SELECT * FROM quote_cards ORDER BY priority, id").fetchall()
+    conn.close()
+    return {"cards": [dict(r) for r in rows]}
+
+
+@app.post("/api/quotes")
+async def add_quote(request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    conn.execute(
+        "INSERT INTO quote_cards (name, phone, email, event_month, notes, owner, stage, priority) VALUES (?,?,?,?,?,?,?,?)",
+        (body.get("name"), body.get("phone"), body.get("email"), body.get("event_month"), body.get("notes"), u["name"], body.get("stage") or "Needs quote", 0),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/quotes/{card_id}/stage")
+async def quote_stage(card_id: int, request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    conn.execute("UPDATE quote_cards SET stage=? WHERE id=?", (body.get("stage"), card_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/quotes/{card_id}")
+def delete_quote(card_id: int, request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    conn = db()
+    conn.execute("DELETE FROM quote_cards WHERE id=?", (card_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/flex/contact/{contact_id}")
+async def flex_contact(contact_id: str, request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    status, body = await flex_get(f"/contact/{contact_id}/key-info")
+    if status >= 400:
+        status, body = await flex_get(f"/contact/{contact_id}")
+    if status >= 400 or not isinstance(body, dict):
+        return JSONResponse({"error": "Could not open this contact", "detail": body}, status_code=502)
+    phone = body.get("phone") or body.get("phoneNumber") or body.get("primaryPhone") or ""
+    email = body.get("email") or body.get("emailAddress") or body.get("primaryEmail") or ""
+    company = body.get("company") or body.get("companyName") or body.get("organizationName") or body.get("name") or ""
+    return {"phone": phone, "email": email, "company": company, "raw": {k: body.get(k) for k in list(body)[:12]}}
+
+
 @app.get("/api/flex/test")
 async def flex_test(request: Request):
     if not user(request):
@@ -821,9 +957,12 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
                 "size": 20,
             }))
         calls.append(("contact", "/contact/search", {"searchText": q, "page": 0, "size": 20}))
-    if kind in ("all", "job", "po"):
+    if kind in ("all", "show", "job"):
         calls.append(("element", "/v1/elements", {"q": q, "page": 1, "size": 20}))
         calls.append(("element", "/element/search", {"searchText": q, "page": 0, "size": 20}))
+    if kind in ("all", "spo", "rpo", "po"):
+        calls.append(("element", "/v1/elements", {"q": q, "page": 1, "size": 20}))
+        calls.append(("po", "/element/search", {"searchText": q, "page": 0, "size": 20}))
     records = []
     attempts = []
     seen = set()
@@ -839,14 +978,20 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
         attempts.append({"kind": group, "path": path, "status": status, "count": len(found), "detail": detail})
         for row in found:
             item = flex_label(row, group)
-            if kind == "po" and item["group"] != "po":
+            if kind == "spo" and not str(item.get("documentNumber") or "").upper().startswith("SPO") and "spo" not in str(item.get("kind") or "").lower():
                 continue
-            if kind == "job" and item["group"] == "po":
+            if kind == "rpo" and not str(item.get("documentNumber") or "").upper().startswith("RPO") and "rpo" not in str(item.get("kind") or "").lower():
                 continue
+            if kind == "show" and item.get("group") == "po":
+                continue
+            if kind == "contact" and item.get("group") not in ("contact", "contact"):
+                if group != "contact":
+                    continue
             key = (item.get("id"), item.get("name"), item.get("group"))
             if key in seen:
                 continue
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
+
 
