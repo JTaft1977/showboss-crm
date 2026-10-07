@@ -349,19 +349,31 @@ function accounts() {
 }
 async function flexView(el) {
   el.innerHTML = `<div class="card" style="padding:14px"><h3 style="margin:0 0 8px">Search Flex</h3>
-    <div class="row"><input id="q" placeholder="Client, quote, project, pull sheet"><button class="primary" id="go">Search</button></div>
-    <p class="sub">Uses your server-side key. Common calls: business location test, then global search. Raw Flex JSON is shown if the record shape is unfamiliar.</p>
+    <div class="seg">
+      <button class="ghost on" data-k="all">All</button>
+      <button class="ghost" data-k="contact">Contacts</button>
+      <button class="ghost" data-k="job">Jobs</button>
+      <button class="ghost" data-k="po">POs</button>
+    </div>
+    <div class="row"><input id="q" placeholder="Client, contact, job, or PO"><button class="primary" id="go">Search</button></div>
+    <p class="sub">One search checks contacts, jobs, and purchase orders in Flex.</p>
     <div id="hits"></div></div>`;
+  let kind = "all";
+  el.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
+    kind = b.dataset.k;
+    el.querySelectorAll("[data-k]").forEach(x => x.classList.toggle("on", x === b));
+  });
   el.querySelector("#go").onclick = async () => {
     const hits = el.querySelector("#hits");
-    hits.textContent = "Searching…";
+    hits.textContent = "Searching contacts, jobs, and POs…";
     try {
-      const res = await api("/api/flex/search?q=" + encodeURIComponent(el.querySelector("#q").value));
-      hits.innerHTML = `<pre class="sub" style="white-space:pre-wrap">${esc(JSON.stringify(res, null, 2)).slice(0, 6000)}</pre>`;
-      (res.records || []).forEach(r => {
-        const row = $(`<div class="flex-hit"><div><strong>${esc(r.name||r.displayName||"Record")}</strong><div class="sub">${esc(r.id||"")}</div></div><button class="ghost">Link to new deal</button></div>`);
-        row.querySelector("button").onclick = () => dealForm({ name: r.name || r.displayName || "Flex job", flex_id: r.id, flex_number: r.documentNumber || "", value: r.budgetedRevenue || r.resolvedBudgetedRevenue || 0 });
-        hits.prepend(row);
+      const res = await api("/api/flex/search?q=" + encodeURIComponent(el.querySelector("#q").value) + "&kind=" + kind);
+      const rows = res.records || [];
+      hits.innerHTML = rows.length ? "" : `<div class="sub">No matches. Flex answered, but none of the contact, job, or PO doors returned this name.</div>`;
+      rows.forEach(r => {
+        const row = $(`<div class="flex-hit"><div><span class="pill">${esc(r.group || r.kind || "")}</span> <strong>${esc(r.name || "Record")}</strong><div class="sub">${esc(r.documentNumber || r.id || "")}</div></div><button class="ghost">Link to new deal</button></div>`);
+        row.querySelector("button").onclick = () => dealForm({ name: r.name || "Flex job", flex_id: r.id, flex_number: r.documentNumber || "", value: r.budgetedRevenue || 0 });
+        hits.append(row);
       });
     } catch (e) { hits.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   };
@@ -655,26 +667,92 @@ async def flex_test(request: Request):
     return {"ok": True, "locations": body}
 
 
+def flex_records(body):
+    if isinstance(body, list):
+        return body
+    if not isinstance(body, dict):
+        return []
+    for key in ("content", "results", "records", "items", "elements", "contacts"):
+        if isinstance(body.get(key), list):
+            return body[key]
+    return []
+
+
+def flex_label(record, kind):
+    if not isinstance(record, dict):
+        return {"name": str(record), "kind": kind}
+    name = (
+        record.get("name")
+        or record.get("displayName")
+        or record.get("preferredDisplayString")
+        or record.get("documentNumber")
+        or record.get("companyName")
+        or "Record"
+    )
+    number = record.get("documentNumber") or record.get("number") or record.get("barcode") or ""
+    return {
+        "id": record.get("id"),
+        "name": name,
+        "kind": record.get("domainId") or kind,
+        "documentNumber": number,
+        "budgetedRevenue": record.get("budgetedRevenue") or record.get("resolvedBudgetedRevenue") or 0,
+    }
+
+
 @app.get("/api/flex/search")
-async def flex_search(request: Request, q: str = ""):
+async def flex_search(request: Request, q: str = "", kind: str = "all"):
     if not user(request):
         return JSONResponse({"error": "auth"}, status_code=401)
     if not q.strip():
         return JSONResponse({"error": "Enter a search term"}, status_code=400)
+    groups = {
+        "contact": [
+            ("/contact", {"query": q, "page": 0, "size": 20}),
+            ("/contact", {"search": q, "page": 0, "size": 20}),
+            ("/contact", {"name": q, "page": 0, "size": 20}),
+            ("/contact/search", {"query": q, "page": 0, "size": 20}),
+            ("/party", {"query": q, "page": 0, "size": 20}),
+            ("/organization", {"query": q, "page": 0, "size": 20}),
+            ("/search", {"query": q, "domain": "contact", "page": 0, "size": 20}),
+            ("/search", {"text": q, "domain": "contact", "page": 0, "size": 20}),
+        ],
+        "job": [
+            ("/element", {"query": q, "page": 0, "size": 20}),
+            ("/element/search", {"query": q, "page": 0, "size": 20}),
+            ("/equipment-list", {"query": q, "page": 0, "size": 20}),
+            ("/project", {"query": q, "page": 0, "size": 20}),
+            ("/quote", {"query": q, "page": 0, "size": 20}),
+            ("/search", {"query": q, "domain": "element", "page": 0, "size": 20}),
+            ("/search", {"text": q, "domain": "quote", "page": 0, "size": 20}),
+        ],
+        "po": [
+            ("/purchase-order", {"query": q, "page": 0, "size": 20}),
+            ("/purchase-order/search", {"query": q, "page": 0, "size": 20}),
+            ("/subrental", {"query": q, "page": 0, "size": 20}),
+            ("/search", {"query": q, "domain": "purchase-order", "page": 0, "size": 20}),
+            ("/search", {"text": q, "domain": "purchase-order", "page": 0, "size": 20}),
+        ],
+    }
+    wanted = list(groups) if kind == "all" else [kind]
+    records = []
     attempts = []
-    for path, params in (
-        ("/search", {"query": q, "page": 0, "size": 20}),
-        ("/global-search", {"text": q, "page": 0, "size": 20}),
-        ("/contact", {"query": q, "page": 0, "size": 20}),
-    ):
-        status, body = await flex_get(path, params)
-        attempts.append({"path": path, "status": status})
-        if status < 400:
-            records = body if isinstance(body, list) else body.get("content") or body.get("results") or body.get("records") or []
-            if isinstance(records, dict):
-                records = [records]
-            return {"endpoint": path, "records": records[:20], "raw_keys": list(body.keys()) if isinstance(body, dict) else "list"}
-    return JSONResponse(
-        {"error": "Flex search endpoints did not accept the call. Open your Swagger and tell me the search path.", "attempts": attempts},
-        status_code=502,
-    )
+    seen = set()
+    for group in wanted:
+        for path, params in groups[group]:
+            status, body = await flex_get(path, params)
+            found = flex_records(body) if status < 400 else []
+            attempts.append({"kind": group, "path": path, "status": status, "count": len(found)})
+            if not found:
+                continue
+            for row in found:
+                item = flex_label(row, group)
+                key = (item.get("id"), item.get("name"), group)
+                if key in seen:
+                    continue
+                seen.add(key)
+                item["kind"] = group if item.get("kind") in (None, "") else item["kind"]
+                item["group"] = group
+                records.append(item)
+            if len(records) >= 40:
+                break
+    return {"records": records[:40], "attempts": attempts}
