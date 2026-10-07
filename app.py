@@ -99,11 +99,11 @@ def init():
           flex_number TEXT,
           updated_at TEXT
         );
-        CREATE TABLE IF NOT EXISTS activity (
+        CREATE TABLE IF NOT EXISTS call_log (
           id INTEGER PRIMARY KEY,
-          deal_id INTEGER,
+          name TEXT,
+          note TEXT,
           user_name TEXT,
-          text TEXT,
           at TEXT
         );
         """
@@ -200,35 +200,36 @@ PAGE = r"""<!DOCTYPE html>
 <title>ShowBoss AV CRM</title>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
-:root { --bg:#09090b; --bg2:#111114; --bg3:#18181c; --line:#2a2a30; --steel:#c8ccd4; --muted:#8b909a; --text:#f4f4f5; --amber:#c4a574; --green:#6fbf86; --danger:#e07a7a; }
+:root { --bg:#ffffff; --bg2:#f5f8fb; --bg3:#eaf4ff; --line:#e3e8ef; --steel:#3d4a5c; --muted:#6b7686; --text:#12171f; --blue:#299fff; --amber:#b8860b; --green:#1f8a4c; --danger:#c44747; }
 * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font-family:"Instrument Sans",sans-serif; }
 button,input,select,textarea { font-family:inherit; color:inherit; } button { cursor:pointer; }
-.app { display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
-.side { background:#0c0c0e; border-right:1px solid var(--line); padding:18px 14px; display:flex; flex-direction:column; gap:16px; }
-.brand { display:flex; gap:10px; align-items:center; } .mark { width:34px; height:34px; border:1px solid #3a3a42; border-radius:8px; display:grid; place-items:center; color:var(--amber); font-weight:700; }
-nav button, .ghost, .primary, .danger { border:1px solid var(--line); background:transparent; color:var(--steel); border-radius:10px; padding:9px 12px; font-weight:600; }
-nav { display:flex; flex-direction:column; gap:4px; } nav button { text-align:left; } nav button.on, nav button:hover { background:var(--bg3); color:var(--text); }
-.primary { background:var(--text); color:#111; border-color:var(--text); } .danger { color:var(--danger); }
+.app { display:grid; grid-template-columns:240px 1fr; min-height:100vh; }
+.side { background:#fff; border-right:1px solid var(--line); padding:18px 14px; display:flex; flex-direction:column; gap:16px; }
+.brand img { height:46px; width:auto; display:block; }
+nav button, .ghost, .primary, .danger { border:1px solid var(--line); background:#fff; color:var(--steel); border-radius:10px; padding:9px 12px; font-weight:600; }
+nav { display:flex; flex-direction:column; gap:4px; } nav button { text-align:left; } nav button.on, nav button:hover { background:var(--bg3); color:var(--blue); border-color:#b9ddff; }
+.primary { background:var(--blue); color:#fff; border-color:var(--blue); } .danger { color:var(--danger); }
 .side-foot { margin-top:auto; display:flex; flex-direction:column; gap:8px; }
-.top { display:flex; justify-content:space-between; align-items:center; padding:16px 22px; border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(9,9,11,.92); }
+.top { display:flex; justify-content:space-between; align-items:center; padding:16px 22px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff; }
 .view { padding:20px 22px 40px; } h2 { margin:0; } .sub { color:var(--muted); font-size:13px; }
 .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
-.stat, .card, .deal, .col { background:var(--bg2); border:1px solid var(--line); border-radius:14px; }
-.stat { padding:14px; } .k { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; } .v { font-size:24px; font-weight:650; margin-top:4px; }
+.stat, .card, .deal, .col { background:#fff; border:1px solid var(--line); border-radius:14px; }
+.stat { padding:14px; } .k { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; } .v { font-size:24px; font-weight:650; margin-top:4px; color:var(--blue); }
 .amber { color:var(--amber); } .green { color:var(--green); }
 .board { display:grid; grid-template-columns:repeat(6,minmax(210px,1fr)); gap:10px; overflow:auto; }
-.col { min-height:380px; background:#0e0e12; } .head { display:flex; justify-content:space-between; padding:10px 12px; font-size:13px; }
+.col { min-height:380px; background:var(--bg2); } .head { display:flex; justify-content:space-between; padding:10px 12px; font-size:13px; }
 .cards { padding:6px; display:flex; flex-direction:column; gap:8px; min-height:70px; }
-.deal { padding:11px; cursor:grab; background:var(--bg3); } .deal .acct { color:var(--muted); font-size:12px; margin:4px 0 8px; }
+.deal { padding:11px; cursor:grab; background:#fff; } .deal .acct { color:var(--muted); font-size:12px; margin:4px 0 8px; }
 .money { font-family:"IBM Plex Mono",monospace; }
-.pill { border-radius:999px; padding:2px 8px; font-size:12px; font-weight:650; background:#222; }
-.pill.inquiry { background:rgba(196,165,116,.16); color:var(--amber); } .pill.confirmed { background:rgba(111,191,134,.16); color:var(--green); }
-table { width:100%; border-collapse:collapse; font-size:14px; } th,td { text-align:left; padding:8px; border-bottom:1px solid #222; } th { color:var(--muted); font-size:12px; text-transform:uppercase; }
-tr.click { cursor:pointer; } input,select,textarea { background:var(--bg2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
-.seg { display:flex; gap:6px; margin-bottom:12px; } .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:grid; place-items:center; } .box { width:min(560px,94vw); background:#121216; border:1px solid var(--line); border-radius:16px; padding:16px; }
+.pill { border-radius:999px; padding:2px 8px; font-size:12px; font-weight:650; background:#eef2f6; color:var(--steel); }
+.pill.inquiry { background:#e7f4ff; color:var(--blue); } .pill.confirmed { background:#e7f6ec; color:var(--green); }
+table { width:100%; border-collapse:collapse; font-size:14px; } th,td { text-align:left; padding:8px; border-bottom:1px solid var(--line); } th { color:var(--muted); font-size:12px; text-transform:uppercase; }
+tr.click { cursor:pointer; } tr.click:hover td { background:#f3f9ff; }
+input,select,textarea { background:#fff; border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+.seg { display:flex; gap:6px; margin-bottom:12px; } .modal { position:fixed; inset:0; background:rgba(18,23,31,.35); display:grid; place-items:center; } .box { width:min(560px,94vw); background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; }
 label { display:grid; gap:4px; font-size:12px; color:var(--muted); margin-bottom:8px; } .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.login { min-height:100vh; display:grid; place-items:center; } .err { color:var(--danger); font-size:13px; }
-.flex-hit { border-bottom:1px solid #222; padding:8px 0; display:flex; justify-content:space-between; gap:8px; }
+.login { min-height:100vh; display:grid; place-items:center; background:#fff; } .err { color:var(--danger); font-size:13px; }
+.flex-hit { border-bottom:1px solid var(--line); padding:8px 0; display:flex; justify-content:space-between; gap:8px; align-items:center; }
 @media (max-width:900px) { .app { grid-template-columns:1fr; } .stats { grid-template-columns:1fr 1fr; } }
 </style>
 </head>
@@ -258,24 +259,28 @@ function render() {
   if (!me) { root.append(login()); return; }
   const shell = document.createElement("div");
   shell.className = "app";
-  shell.innerHTML = `<aside class="side"><div class="brand"><div class="mark">SB</div><div><strong>ShowBoss AV</strong><div class="sub">${esc(me.name)}</div></div></div>
+  shell.innerHTML = `<aside class="side"><div class="brand"><img src="https://showbossav.com/wp-content/uploads/2025/11/SB-Refresh-Logos_Blue-Shade-Black-Fly-scaled.png" alt="ShowBoss AV"></div>
     <nav>
       <button data-v="dash" class="${view==='dash'?'on':''}">Dashboard</button>
+      <button data-v="inquiry" class="${view==='inquiry'?'on':''}">Inquiry leads</button>
+      <button data-v="calls" class="${view==='calls'?'on':''}">Call list</button>
       <button data-v="pipe" class="${view==='pipe'?'on':''}">Pipeline</button>
       <button data-v="accounts" class="${view==='accounts'?'on':''}">Accounts</button>
       <button data-v="flex" class="${view==='flex'?'on':''}">Flex</button>
       <button data-v="settings" class="${view==='settings'?'on':''}">Settings</button>
     </nav>
     <div class="side-foot"><button class="primary" id="newDeal">New deal</button><button class="ghost" id="logout">Sign out</button></div></aside>
-    <main><header class="top"><div><h2 id="ttl"></h2><div class="sub">Shared book · Flex Rental Solutions</div></div></header><section class="view" id="view"></section></main>`;
+    <main><header class="top"><div><h2 id="ttl"></h2><div class="sub">ShowBoss AV · showbossav.flexrentalsolutions.com</div></div></header><section class="view" id="view"></section></main>`;
   root.append(shell);
   shell.querySelectorAll("nav button").forEach(b => b.onclick = () => { view = b.dataset.v; render(); });
   shell.querySelector("#logout").onclick = async () => { await fetch("/api/logout", {method:"POST"}); me = null; render(); };
   shell.querySelector("#newDeal").onclick = () => dealForm();
   const viewEl = shell.querySelector("#view");
-  const titles = {dash:"Dashboard", pipe:"Pipeline", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
+  const titles = {dash:"Dashboard", inquiry:"Inquiry leads", calls:"Call list", pipe:"Pipeline", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
   shell.querySelector("#ttl").textContent = titles[view];
   if (view === "dash") viewEl.append(dash());
+  if (view === "inquiry") inquiryView(viewEl);
+  if (view === "calls") callsView(viewEl);
   if (view === "pipe") viewEl.append(pipeline());
   if (view === "accounts") viewEl.append(accounts());
   if (view === "flex") flexView(viewEl);
@@ -339,6 +344,32 @@ function pipeline() {
     board.append(col);
   });
   return el;
+}
+async function inquiryView(el) {
+  el.innerHTML = `<div class="card" style="padding:14px"><h3 style="margin-top:0">Quotes in inquiry</h3><p class="sub">Pulled from Flex. These are the leads to work.</p><div id="rows">Loading…</div></div>`;
+  try {
+    const res = await api("/api/lists/inquiry");
+    const rows = res.records || [];
+    el.querySelector("#rows").innerHTML = rows.length ? `<table><thead><tr><th>Quote</th><th>Number</th><th>Status</th><th>Start</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.documentNumber||"")}</td><td><span class="pill inquiry">${esc(r.status||"Inquiry")}</span></td><td>${esc(r.date||"")}</td><td><button class="primary" data-add="${esc(r.id)}" data-name="${esc(r.name)}" data-num="${esc(r.documentNumber||"")}">Add to pipeline</button></td></tr>`).join("")}
+    </tbody></table>` : `<div class="sub">No inquiry quotes came back. ${esc(res.detail||"")}</div>`;
+    el.querySelectorAll("[data-add]").forEach(b => b.onclick = () => dealForm({ name: b.dataset.name, flex_id: b.dataset.add, flex_number: b.dataset.num, pipeline: "event" }));
+  } catch (e) { el.querySelector("#rows").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+async function callsView(el) {
+  el.innerHTML = `<div class="card" style="padding:14px"><h3 style="margin-top:0">Quiet clients</h3><p class="sub">Jobs whose end date is more than a year ago. Call these companies.</p><div id="rows">Loading…</div></div>`;
+  try {
+    const res = await api("/api/lists/quiet");
+    const rows = res.records || [];
+    el.querySelector("#rows").innerHTML = rows.length ? `<table><thead><tr><th>Client / job</th><th>Last end</th><th>Number</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.date||"")}</td><td>${esc(r.documentNumber||"")}</td><td><button class="ghost" data-called="${esc(r.name)}">Log call</button></td></tr>`).join("")}
+    </tbody></table>` : `<div class="sub">No quiet jobs came back. ${esc(res.detail||"")}</div>`;
+    el.querySelectorAll("[data-called]").forEach(b => b.onclick = async () => {
+      const note = prompt("Call note for " + b.dataset.called) || "Called";
+      await api("/api/lists/call-log", { method:"POST", body:{ name: b.dataset.called, note } });
+      b.textContent = "Logged";
+    });
+  } catch (e) { el.querySelector("#rows").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 function accounts() {
   const el = document.createElement("div");
@@ -657,6 +688,73 @@ async def password(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/lists/inquiry")
+async def inquiry_list(request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    status, body = await flex_get("/v1/elements", {"statusName": "Inquiry", "page": 1, "size": 50, "sort": "plannedStartDate,desc"})
+    records = flex_records(body) if status < 400 else []
+    detail = ""
+    if status >= 400 and isinstance(body, dict):
+        detail = str(body.get("exceptionMessage") or body.get("error") or body)[:200]
+    out = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        out.append({
+            "id": row.get("id"),
+            "name": row.get("name") or row.get("displayName") or "Quote",
+            "documentNumber": row.get("documentNumber") or "",
+            "status": (row.get("status") or {}).get("name") if isinstance(row.get("status"), dict) else row.get("statusName") or "Inquiry",
+            "date": (row.get("plannedStartDate") or "")[:10],
+        })
+    return {"records": out, "detail": detail, "status": status}
+
+
+@app.get("/api/lists/quiet")
+async def quiet_list(request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=365)).isoformat()
+    status, body = await flex_get("/v1/elements", {"plannedEndBefore": cutoff, "page": 1, "size": 80, "sort": "plannedEndDate,desc"})
+    records = flex_records(body) if status < 400 else []
+    detail = ""
+    if status >= 400 and isinstance(body, dict):
+        detail = str(body.get("exceptionMessage") or body.get("error") or body)[:200]
+    seen = set()
+    out = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name") or row.get("displayName") or "Job"
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({
+            "name": name,
+            "documentNumber": row.get("documentNumber") or "",
+            "date": (row.get("plannedEndDate") or row.get("plannedStartDate") or "")[:10],
+        })
+    return {"records": out, "detail": detail, "status": status}
+
+
+@app.post("/api/lists/call-log")
+async def call_log(request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    conn.execute(
+        "INSERT INTO call_log (name, note, user_name, at) VALUES (?,?,?,?)",
+        (body.get("name"), body.get("note"), u["name"], now()),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/flex/test")
 async def flex_test(request: Request):
     if not user(request):
@@ -751,3 +849,4 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
+
