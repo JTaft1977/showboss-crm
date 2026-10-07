@@ -369,7 +369,7 @@ async function flexView(el) {
     try {
       const res = await api("/api/flex/search?q=" + encodeURIComponent(el.querySelector("#q").value) + "&kind=" + kind);
       const rows = res.records || [];
-      hits.innerHTML = rows.length ? "" : `<div class="sub">No matches. Flex answered, but none of the contact, job, or PO doors returned this name.</div>`;
+      hits.innerHTML = rows.length ? "" : `<div class="sub">No matches.</div><pre class="sub">${esc(JSON.stringify(res.attempts || [], null, 2))}</pre>`;
       rows.forEach(r => {
         const row = $(`<div class="flex-hit"><div><span class="pill">${esc(r.group || r.kind || "")}</span> <strong>${esc(r.name || "Record")}</strong><div class="sub">${esc(r.documentNumber || r.id || "")}</div></div><button class="ghost">Link to new deal</button></div>`);
         row.querySelector("button").onclick = () => dealForm({ name: r.name || "Flex job", flex_id: r.id, flex_number: r.documentNumber || "", value: r.budgetedRevenue || 0 });
@@ -680,7 +680,10 @@ def flex_records(body):
 
 def flex_label(record, kind):
     if not isinstance(record, dict):
-        return {"name": str(record), "kind": kind}
+        return {"name": str(record), "kind": kind, "group": kind}
+    definition = record.get("definitionName") or record.get("elementDefinitionName") or ""
+    if isinstance(record.get("definition"), dict):
+        definition = definition or record["definition"].get("name") or ""
     name = (
         record.get("name")
         or record.get("displayName")
@@ -689,12 +692,16 @@ def flex_label(record, kind):
         or record.get("companyName")
         or "Record"
     )
-    number = record.get("documentNumber") or record.get("number") or record.get("barcode") or ""
+    text = f"{definition} {name}".lower()
+    group = kind
+    if kind == "element":
+        group = "po" if any(word in text for word in ("purchase", "po", "subrental")) else "job"
     return {
         "id": record.get("id"),
         "name": name,
-        "kind": record.get("domainId") or kind,
-        "documentNumber": number,
+        "kind": definition or kind,
+        "group": group,
+        "documentNumber": record.get("documentNumber") or record.get("number") or "",
         "budgetedRevenue": record.get("budgetedRevenue") or record.get("resolvedBudgetedRevenue") or 0,
     }
 
@@ -705,54 +712,31 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
         return JSONResponse({"error": "auth"}, status_code=401)
     if not q.strip():
         return JSONResponse({"error": "Enter a search term"}, status_code=400)
-    groups = {
-        "contact": [
-            ("/contact", {"query": q, "page": 0, "size": 20}),
-            ("/contact", {"search": q, "page": 0, "size": 20}),
-            ("/contact", {"name": q, "page": 0, "size": 20}),
-            ("/contact/search", {"query": q, "page": 0, "size": 20}),
-            ("/party", {"query": q, "page": 0, "size": 20}),
-            ("/organization", {"query": q, "page": 0, "size": 20}),
-            ("/search", {"query": q, "domain": "contact", "page": 0, "size": 20}),
-            ("/search", {"text": q, "domain": "contact", "page": 0, "size": 20}),
-        ],
-        "job": [
-            ("/element", {"query": q, "page": 0, "size": 20}),
-            ("/element/search", {"query": q, "page": 0, "size": 20}),
-            ("/equipment-list", {"query": q, "page": 0, "size": 20}),
-            ("/project", {"query": q, "page": 0, "size": 20}),
-            ("/quote", {"query": q, "page": 0, "size": 20}),
-            ("/search", {"query": q, "domain": "element", "page": 0, "size": 20}),
-            ("/search", {"text": q, "domain": "quote", "page": 0, "size": 20}),
-        ],
-        "po": [
-            ("/purchase-order", {"query": q, "page": 0, "size": 20}),
-            ("/purchase-order/search", {"query": q, "page": 0, "size": 20}),
-            ("/subrental", {"query": q, "page": 0, "size": 20}),
-            ("/search", {"query": q, "domain": "purchase-order", "page": 0, "size": 20}),
-            ("/search", {"text": q, "domain": "purchase-order", "page": 0, "size": 20}),
-        ],
-    }
-    wanted = list(groups) if kind == "all" else [kind]
+    calls = []
+    if kind in ("all", "contact"):
+        calls.append(("contact", "/contact/search", {"searchText": q, "page": 0, "size": 25}))
+        calls.append(("contact", "/search", {"searchText": q, "searchType": "contact", "max": 25, "includeClosed": "true"}))
+    if kind in ("all", "job", "po"):
+        calls.append(("element", "/v1/elements", {"q": q, "page": 1, "size": 25}))
+        calls.append(("element", "/element/search", {"searchText": q, "page": 0, "size": 25, "rootElementsOnly": "false"}))
+        calls.append(("element", "/search", {"searchText": q, "searchType": "element", "max": 25, "includeClosed": "true"}))
+        calls.append(("element", "/search", {"searchText": q, "searchType": "all", "max": 25, "includeClosed": "true"}))
     records = []
     attempts = []
     seen = set()
-    for group in wanted:
-        for path, params in groups[group]:
-            status, body = await flex_get(path, params)
-            found = flex_records(body) if status < 400 else []
-            attempts.append({"kind": group, "path": path, "status": status, "count": len(found)})
-            if not found:
+    for group, path, params in calls:
+        status, body = await flex_get(path, params)
+        found = flex_records(body) if status < 400 else []
+        attempts.append({"kind": group, "path": path, "status": status, "count": len(found)})
+        for row in found:
+            item = flex_label(row, group)
+            if kind == "po" and item["group"] != "po":
                 continue
-            for row in found:
-                item = flex_label(row, group)
-                key = (item.get("id"), item.get("name"), group)
-                if key in seen:
-                    continue
-                seen.add(key)
-                item["kind"] = group if item.get("kind") in (None, "") else item["kind"]
-                item["group"] = group
-                records.append(item)
-            if len(records) >= 40:
-                break
+            if kind == "job" and item["group"] == "po":
+                continue
+            key = (item.get("id"), item.get("name"), item.get("group"))
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(item)
     return {"records": records[:40], "attempts": attempts}
