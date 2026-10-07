@@ -688,8 +688,10 @@ def flex_label(record, kind):
         record.get("name")
         or record.get("displayName")
         or record.get("preferredDisplayString")
-        or record.get("documentNumber")
+        or record.get("company")
         or record.get("companyName")
+        or " ".join(x for x in [record.get("firstName"), record.get("lastName")] if x)
+        or record.get("documentNumber")
         or "Record"
     )
     text = f"{definition} {name}".lower()
@@ -714,20 +716,29 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
         return JSONResponse({"error": "Enter a search term"}, status_code=400)
     calls = []
     if kind in ("all", "contact"):
-        calls.append(("contact", "/contact/search", {"searchText": q, "page": 0, "size": 25}))
-        calls.append(("contact", "/search", {"searchText": q, "searchType": "contact", "max": 25, "includeClosed": "true"}))
+        for prop in ("company", "companyName", "firstName", "lastName"):
+            calls.append(("contact", "/contact-manager/grid-node", {
+                "filter": json.dumps([{"property": prop, "value": q}]),
+                "page": 0,
+                "size": 20,
+            }))
+        calls.append(("contact", "/contact/search", {"searchText": q, "page": 0, "size": 20}))
     if kind in ("all", "job", "po"):
-        calls.append(("element", "/v1/elements", {"q": q, "page": 1, "size": 25}))
-        calls.append(("element", "/element/search", {"searchText": q, "page": 0, "size": 25, "rootElementsOnly": "false"}))
-        calls.append(("element", "/search", {"searchText": q, "searchType": "element", "max": 25, "includeClosed": "true"}))
-        calls.append(("element", "/search", {"searchText": q, "searchType": "all", "max": 25, "includeClosed": "true"}))
+        calls.append(("element", "/v1/elements", {"q": q, "page": 1, "size": 20}))
+        calls.append(("element", "/element/search", {"searchText": q, "page": 0, "size": 20}))
     records = []
     attempts = []
     seen = set()
     for group, path, params in calls:
         status, body = await flex_get(path, params)
         found = flex_records(body) if status < 400 else []
-        attempts.append({"kind": group, "path": path, "status": status, "count": len(found)})
+        detail = ""
+        if status >= 400:
+            if isinstance(body, dict):
+                detail = str(body.get("exceptionMessage") or body.get("error") or body)[:180]
+            else:
+                detail = str(body)[:180]
+        attempts.append({"kind": group, "path": path, "status": status, "count": len(found), "detail": detail})
         for row in found:
             item = flex_label(row, group)
             if kind == "po" and item["group"] != "po":
