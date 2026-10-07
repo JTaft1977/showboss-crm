@@ -99,6 +99,15 @@ def init():
           flex_number TEXT,
           updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS contact_notes (
+          id INTEGER PRIMARY KEY,
+          contact_id TEXT,
+          contact_name TEXT,
+          kind TEXT,
+          note TEXT,
+          user_name TEXT,
+          at TEXT
+        );
         CREATE TABLE IF NOT EXISTS quote_cards (
           id INTEGER PRIMARY KEY,
           name TEXT NOT NULL,
@@ -389,7 +398,9 @@ async function quoteFlow(el) {
       box.append(card);
     });
     box.ondragover = (e) => e.preventDefault();
-    box.ondrop = async (e) => { e.preventDefault(); await api("/api/quotes/"+e.dataTransfer.getData("text/plain")+"/stage", {method:"POST", body:{stage: box.dataset.stage}}); quoteFlow(el); };
+    box.ondrop = async (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); if (!id) return; await api("/api/quotes/"+id+"/stage", {method:"POST", body:{stage: box.dataset.stage}}); quoteFlow(el); };
+    col.ondragover = (e) => e.preventDefault();
+    col.ondrop = box.ondrop;
     board.append(col);
   });
   board.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { await api("/api/quotes/"+b.dataset.del, {method:"DELETE"}); quoteFlow(el); });
@@ -471,15 +482,28 @@ async function flexView(el) {
   };
 }
 async function openContact(id, name) {
-  const box = $(`<div class="modal"><div class="box"><h3>${esc(name||"Contact")}</h3><div id="body">Loading…</div><button class="ghost" id="x">Close</button></div></div>`);
+  const box = $(`<div class="modal"><div class="box" style="width:min(640px,94vw)"><h3>${esc(name||"Contact")}</h3><div id="body">Loading…</div><h3>Notes</h3><div id="log"></div>
+    <div class="row"><select id="kind"><option>Called</option><option>LM</option><option>Txt</option></select><input id="note" placeholder="What happened"></div>
+    <button class="primary" id="save">Save note</button> <button class="ghost" id="x">Close</button></div></div>`);
   box.querySelector("#x").onclick = () => box.remove();
   document.body.append(box);
-  try {
-    const c = await api("/api/flex/contact/" + id);
+  const draw = (c) => {
     const phone = c.phone || "";
     const email = c.email || "";
-    box.querySelector("#body").innerHTML = `<div class="kv"><span>Company</span><div>${esc(c.company||"—")}</div><span>Phone</span><div>${phone?`<a href="tel:${esc(phone)}">${esc(phone)}</a>`:"—"}</div><span>Email</span><div>${email?`<a href="mailto:${esc(email)}">${esc(email)}</a>`:"—"}</div></div>`;
-  } catch (e) { box.querySelector("#body").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+    box.querySelector("#body").innerHTML = `<div class="kv"><span>Company</span><div>${esc(c.company||"—")}</div>
+      <span>Phone</span><div>${phone?`<a href="tel:${esc(phone)}">${esc(phone)}</a> <button class="ghost" id="callnote">Note this call</button>`:"—"}</div>
+      <span>Email</span><div>${email?`<a href="mailto:${esc(email)}">${esc(email)}</a>`:"—"}</div></div>`;
+    const notes = c.notes || [];
+    box.querySelector("#log").innerHTML = notes.length ? notes.map(n => `<div class="flex-hit"><div><span class="pill">${esc(n.kind)}</span> ${esc(n.note||"")}<div class="sub">${esc(n.at||"")} · ${esc(n.user_name||"")}</div></div></div>`).join("") : `<div class="sub">No attempts yet.</div>`;
+    box.querySelector("#callnote")?.addEventListener("click", () => { box.querySelector("#kind").value = "Called"; box.querySelector("#note").focus(); });
+  };
+  const load = async () => { draw(await api("/api/flex/contact/" + id)); };
+  box.querySelector("#save").onclick = async () => {
+    await api("/api/contacts/notes", { method:"POST", body:{ contact_id:id, contact_name:name, kind:box.querySelector("#kind").value, note:box.querySelector("#note").value } });
+    box.querySelector("#note").value = "";
+    await load();
+  };
+  try { await load(); } catch (e) { box.querySelector("#body").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 async function settingsView(el) {
   const s = await api("/api/settings");
@@ -876,19 +900,58 @@ def delete_quote(card_id: int, request: Request):
     return {"ok": True}
 
 
+def first_text(rows, keys):
+    if isinstance(rows, dict):
+        rows = rows.get("content") or rows.get("results") or [rows]
+    if not isinstance(rows, list):
+        return ""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in keys:
+            if row.get(key):
+                return str(row[key])
+    return ""
+
+
 @app.get("/api/flex/contact/{contact_id}")
 async def flex_contact(contact_id: str, request: Request):
-    if not user(request):
+    u = user(request)
+    if not u:
         return JSONResponse({"error": "auth"}, status_code=401)
     status, body = await flex_get(f"/contact/{contact_id}/key-info")
     if status >= 400:
         status, body = await flex_get(f"/contact/{contact_id}")
-    if status >= 400 or not isinstance(body, dict):
-        return JSONResponse({"error": "Could not open this contact", "detail": body}, status_code=502)
-    phone = body.get("phone") or body.get("phoneNumber") or body.get("primaryPhone") or ""
-    email = body.get("email") or body.get("emailAddress") or body.get("primaryEmail") or ""
-    company = body.get("company") or body.get("companyName") or body.get("organizationName") or body.get("name") or ""
-    return {"phone": phone, "email": email, "company": company, "raw": {k: body.get(k) for k in list(body)[:12]}}
+    company = ""
+    if isinstance(body, dict):
+        company = body.get("company") or body.get("companyName") or body.get("organizationName") or body.get("name") or ""
+    phone_status, phones = await flex_get("/phone-number/contact-phone-numbers", {"contactId": contact_id})
+    email_status, emails = await flex_get("/internet-address/contact-internet-addresses", {"contactId": contact_id})
+    phone = first_text(phones, ("phoneNumber", "number", "value", "displayString"))
+    email = first_text(emails, ("internetAddress", "email", "address", "value", "displayString"))
+    conn = db()
+    notes = [dict(r) for r in conn.execute(
+        "SELECT kind, note, user_name, at FROM contact_notes WHERE contact_id=? ORDER BY id DESC",
+        (contact_id,),
+    ).fetchall()]
+    conn.close()
+    return {"phone": phone, "email": email, "company": company, "notes": notes, "phone_status": phone_status, "email_status": email_status}
+
+
+@app.post("/api/contacts/notes")
+async def add_contact_note(request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    conn.execute(
+        "INSERT INTO contact_notes (contact_id, contact_name, kind, note, user_name, at) VALUES (?,?,?,?,?,?)",
+        (body.get("contact_id"), body.get("contact_name"), body.get("kind") or "Called", body.get("note") or "", u["name"], now()),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.get("/api/flex/test")
@@ -993,5 +1056,6 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
+
 
 
