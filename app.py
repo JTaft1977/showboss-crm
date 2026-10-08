@@ -749,24 +749,39 @@ async def dashboard(request: Request):
     start = today.replace(day=1).isoformat()
     end = today.replace(day=last).isoformat()
     days_left = last - today.day
-    money_codes = ("budgetedRevenue", "resolvedBudgetedRevenue", "totalPrice", "estimatedPrice", "budgetedCost")
+    code_status, code_body = await flex_get("/element/header-data/codes")
+    codes = []
+    if code_status < 400:
+        blob = json.dumps(code_body).lower()
+        raw_codes = []
+        if isinstance(code_body, list):
+            raw_codes = code_body
+        elif isinstance(code_body, dict):
+            raw_codes = code_body.get("codes") or code_body.get("content") or list(code_body.keys())
+        for item in raw_codes:
+            text = item if isinstance(item, str) else (item.get("code") or item.get("name") or "")
+            if any(word in str(text).lower() for word in ("revenue", "total", "price", "amount")):
+                codes.append(text)
+    if not codes:
+        codes = ["budgetedRevenue", "total"]
+
+    async def quote_amount(eid):
+        params = [("codeList", code) for code in codes[:6]]
+        for path in (f"/element/{eid}/header-data", f"/financial-document/{eid}/total-row-data"):
+            h_status, h_body = await flex_get(path, params)
+            found = money_of(h_body) if h_status < 400 else 0
+            if found:
+                return found
+        return 0
 
     async def pull(status_name):
         base = {"statusName": status_name, "plannedStartAfter": start, "plannedStartBefore": end, "page": 1, "size": 100}
         status, body = await flex_get("/v1/elements", base)
         rows = flex_records(body) if status < 400 else []
-        detail = f"{status_name} {status}/{len(rows)}"
         amount = 0
         for row in rows:
-            eid = row.get("id")
-            if not eid:
-                continue
-            for path in (f"/financial-document/{eid}/total-row-data", f"/element/{eid}/header-data"):
-                h_status, h_body = await flex_get(path, {"codeList": "budgetedRevenue"})
-                found = money_of(h_body) if h_status < 400 else 0
-                if found:
-                    amount += found
-                    break
+            if row.get("id"):
+                amount += await quote_amount(row["id"])
         return rows, amount
 
     confirmed, c_amount = await pull("Confirmed")
