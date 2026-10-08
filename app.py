@@ -722,6 +722,12 @@ def money_of(row):
                 return float(row[key])
             except (TypeError, ValueError):
                 pass
+    for field in row.get("headerFields") or []:
+        if isinstance(field, dict) and field.get("value") not in (None, ""):
+            try:
+                return float(field["value"])
+            except (TypeError, ValueError):
+                pass
     return 0
 
 
@@ -736,21 +742,28 @@ async def dashboard(request: Request):
     start = today.replace(day=1).isoformat()
     end = today.replace(day=last).isoformat()
     days_left = last - today.day
+    money_codes = ("budgetedRevenue", "resolvedBudgetedRevenue", "totalPrice", "estimatedPrice", "budgetedCost")
+
     async def pull(status_name):
-        status, body = await flex_get("/v1/elements", {
-            "statusName": status_name,
-            "plannedStartAfter": start,
-            "plannedStartBefore": end,
-            "page": 1,
-            "size": 100,
-        })
+        base = {"statusName": status_name, "plannedStartAfter": start, "plannedStartBefore": end, "page": 1, "size": 100}
+        status, body = await flex_get("/v1/elements", base)
         rows = flex_records(body) if status < 400 else []
         detail = ""
+        used = ""
+        for code in money_codes:
+            m_status, m_body = await flex_get("/v1/elements", {**base, "fields": code})
+            if m_status < 400 and flex_records(m_body):
+                rows = flex_records(m_body)
+                used = code
+                break
+            if m_status >= 400 and isinstance(m_body, dict) and not detail:
+                detail = str(m_body.get("exceptionMessage") or "")[:120]
         if status >= 400 and isinstance(body, dict):
             detail = str(body.get("exceptionMessage") or body.get("error") or "")[:160]
-        return rows, detail
-    confirmed, c_detail = await pull("Confirmed")
-    inquiry, i_detail = await pull("Inquiry")
+        return rows, detail, used
+
+    confirmed, c_detail, c_code = await pull("Confirmed")
+    inquiry, i_detail, i_code = await pull("Inquiry")
     return {
         "date": f"{today.strftime('%B')} {today.day}, {today.year}",
         "month": today.strftime("%B %Y"),
@@ -759,7 +772,7 @@ async def dashboard(request: Request):
         "confirmed_amount": sum(money_of(r) for r in confirmed),
         "inquiry_count": len(inquiry),
         "inquiry_amount": sum(money_of(r) for r in inquiry),
-        "detail": c_detail or i_detail,
+        "detail": " ".join(x for x in (c_code, i_code, c_detail, i_detail) if x),
     }
 
 
@@ -1311,8 +1324,3 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
-
-
-
-
-
