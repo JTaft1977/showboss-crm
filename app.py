@@ -749,39 +749,48 @@ async def dashboard(request: Request):
     start = today.replace(day=1).isoformat()
     end = today.replace(day=last).isoformat()
     days_left = last - today.day
-    code_status, code_body = await flex_get("/element/header-data/codes")
-    codes = []
-    if code_status < 400:
-        blob = json.dumps(code_body).lower()
-        raw_codes = []
-        if isinstance(code_body, list):
-            raw_codes = code_body
-        elif isinstance(code_body, dict):
-            raw_codes = code_body.get("codes") or code_body.get("content") or list(code_body.keys())
-        for item in raw_codes:
-            text = item if isinstance(item, str) else (item.get("code") or item.get("name") or "")
-            if any(word in str(text).lower() for word in ("revenue", "total", "price", "amount")):
-                codes.append(text)
-    if not codes:
-        codes = ["budgetedRevenue", "total"]
-
-    async def quote_amount(eid):
-        params = [("codeList", code) for code in codes[:6]]
-        for path in (f"/element/{eid}/header-data", f"/financial-document/{eid}/total-row-data"):
-            h_status, h_body = await flex_get(path, params)
-            found = money_of(h_body) if h_status < 400 else 0
-            if found:
-                return found
-        return 0
+    def_status, definitions = await flex_get("/v1/element-definitions")
+    quote_def = ""
+    if def_status < 400:
+        for item in flex_records(definitions) or (definitions if isinstance(definitions, list) else []):
+            name = str(item.get("name") or "")
+            if name.lower() in ("quote", "quotes"):
+                quote_def = item.get("id") or ""
+                break
+        if not quote_def:
+            for item in flex_records(definitions) or []:
+                if "quote" in str(item.get("name") or "").lower():
+                    quote_def = item.get("id") or ""
+                    break
+    info_status, info = await flex_get(f"/element-list/{quote_def}/list-view-info") if quote_def else (0, {})
+    field_ids = []
+    if isinstance(info, dict):
+        columns = info.get("columns") or info.get("headerFields") or info.get("fields") or []
+        if isinstance(columns, list):
+            for col in columns:
+                label = str(col.get("name") or col.get("label") or col.get("code") or "").lower()
+                if any(word in label for word in ("total", "price", "revenue", "amount")):
+                    field_ids.append(col.get("id") or col.get("headerFieldTypeId") or col.get("code"))
+    if not field_ids and isinstance(info, dict):
+        field_ids = [info.get("id")] if info.get("id") else []
 
     async def pull(status_name):
         base = {"statusName": status_name, "plannedStartAfter": start, "plannedStartBefore": end, "page": 1, "size": 100}
         status, body = await flex_get("/v1/elements", base)
         rows = flex_records(body) if status < 400 else []
         amount = 0
-        for row in rows:
-            if row.get("id"):
-                amount += await quote_amount(row["id"])
+        if quote_def and field_ids:
+            filt = json.dumps([
+                {"property": "statusName", "value": status_name},
+                {"property": "plannedStartDate", "value": start, "operator": "after"},
+            ])
+            t_status, t_body = await flex_get("/element-list/total-data", {
+                "definitionId": quote_def,
+                "headerFieldTypeIds": field_ids[0],
+                "filter": filt,
+            })
+            if t_status < 400:
+                amount = money_of(t_body)
         return rows, amount
 
     confirmed, c_amount = await pull("Confirmed")
