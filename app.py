@@ -363,7 +363,7 @@ async function dashView(el) {
         </div>
         <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.inquiry_count ?? 0}</div></div>
       </div>
-      <p class="sub" style="margin-top:14px">Live from Flex.</p>
+      <p class="sub" style="margin-top:14px">Live from Flex. ${esc(d.note||"")}</p>
     </div>`;
   };
   paint({ date:"Loading…", days_left:"—" });
