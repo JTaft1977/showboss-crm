@@ -363,7 +363,7 @@ async function dashView(el) {
         </div>
         <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.inquiry_count ?? 0}</div></div>
       </div>
-      <p class="sub" style="margin-top:14px">Live from Flex for this month. Refreshes every 30 seconds. ${esc(d.detail||"")}</p>
+      <p class="sub" style="margin-top:14px">Live from Flex.</p>
     </div>`;
   };
   paint({ date:"Loading…", days_left:"—" });
@@ -714,21 +714,28 @@ def logout(request: Request):
 
 
 def money_of(row):
+    if isinstance(row, (int, float)) and not isinstance(row, bool):
+        return float(row)
+    if isinstance(row, str):
+        cleaned = row.replace(",", "").replace("$", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0
+    if isinstance(row, list):
+        return sum(money_of(item) for item in row)
     if not isinstance(row, dict):
         return 0
-    for key in ("budgetedRevenue", "resolvedBudgetedRevenue", "total", "amount", "grandTotal"):
-        if row.get(key):
-            try:
-                return float(row[key])
-            except (TypeError, ValueError):
-                pass
-    for field in row.get("headerFields") or []:
-        if isinstance(field, dict) and field.get("value") not in (None, ""):
-            try:
-                return float(field["value"])
-            except (TypeError, ValueError):
-                pass
-    return 0
+    total = 0
+    code = str(row.get("code") or row.get("name") or "").lower()
+    if code in ("budgetedrevenue", "resolvedbudgetedrevenue", "totalprice", "estimatedprice", "budgetedcost"):
+        total += money_of(row.get("value"))
+    for key, value in row.items():
+        if key.lower() in ("budgetedrevenue", "resolvedbudgetedrevenue", "totalprice", "estimatedprice", "total", "amount", "grandtotal"):
+            total += money_of(value)
+        elif isinstance(value, (dict, list)):
+            total += money_of(value)
+    return total
 
 
 @app.get("/api/dashboard")
@@ -749,31 +756,30 @@ async def dashboard(request: Request):
         status, body = await flex_get("/v1/elements", base)
         rows = flex_records(body) if status < 400 else []
         detail = f"{status_name} {status}/{len(rows)}"
-        amount = sum(money_of(r) for r in rows)
-        if rows and amount == 0:
+        amount = 0
+        if rows:
             sample = rows[0].get("id")
             for code in ("budgetedRevenue", "resolvedBudgetedRevenue", "totalPrice", "estimatedPrice"):
                 h_status, h_body = await flex_get(f"/element/{sample}/header-data", {"codeList": code})
-                if h_status < 400:
-                    amount = sum(money_of(r) for r in rows) or money_of(h_body if isinstance(h_body, dict) else {})
-                    detail += f" header {code} {h_status}"
-                    if amount:
-                        break
-                else:
-                    detail += f" header {code} {h_status}"
-        return rows, amount, detail
+                if h_status < 400 and money_of(h_body):
+                    amount = 0
+                    for row in rows:
+                        one_status, one_body = await flex_get(f"/element/{row.get('id')}/header-data", {"codeList": code})
+                        if one_status < 400:
+                            amount += money_of(one_body)
+                    break
+        return rows, amount
 
-    confirmed, c_detail, c_code = await pull("Confirmed")
-    inquiry, i_detail, i_code = await pull("Inquiry")
+    confirmed, c_amount = await pull("Confirmed")
+    inquiry, i_amount = await pull("Inquiry")
     return {
         "date": f"{today.strftime('%B')} {today.day}, {today.year}",
         "month": today.strftime("%B %Y"),
         "days_left": days_left,
         "confirmed_count": len(confirmed),
-        "confirmed_amount": sum(money_of(r) for r in confirmed),
+        "confirmed_amount": c_amount,
         "inquiry_count": len(inquiry),
-        "inquiry_amount": sum(money_of(r) for r in inquiry),
-        "detail": " ".join(x for x in (c_code, i_code, c_detail, i_detail) if x),
+        "inquiry_amount": i_amount,
     }
 
 
