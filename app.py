@@ -748,19 +748,20 @@ async def dashboard(request: Request):
         base = {"statusName": status_name, "plannedStartAfter": start, "plannedStartBefore": end, "page": 1, "size": 100}
         status, body = await flex_get("/v1/elements", base)
         rows = flex_records(body) if status < 400 else []
-        detail = ""
-        used = ""
-        for code in money_codes:
-            m_status, m_body = await flex_get("/v1/elements", {**base, "fields": code})
-            if m_status < 400 and flex_records(m_body):
-                rows = flex_records(m_body)
-                used = code
-                break
-            if m_status >= 400 and isinstance(m_body, dict) and not detail:
-                detail = str(m_body.get("exceptionMessage") or "")[:120]
-        if status >= 400 and isinstance(body, dict):
-            detail = str(body.get("exceptionMessage") or body.get("error") or "")[:160]
-        return rows, detail, used
+        detail = f"{status_name} {status}/{len(rows)}"
+        amount = sum(money_of(r) for r in rows)
+        if rows and amount == 0:
+            sample = rows[0].get("id")
+            for code in ("budgetedRevenue", "resolvedBudgetedRevenue", "totalPrice", "estimatedPrice"):
+                h_status, h_body = await flex_get(f"/element/{sample}/header-data", {"codeList": code})
+                if h_status < 400:
+                    amount = sum(money_of(r) for r in rows) or money_of(h_body if isinstance(h_body, dict) else {})
+                    detail += f" header {code} {h_status}"
+                    if amount:
+                        break
+                else:
+                    detail += f" header {code} {h_status}"
+        return rows, amount, detail
 
     confirmed, c_detail, c_code = await pull("Confirmed")
     inquiry, i_detail, i_code = await pull("Inquiry")
