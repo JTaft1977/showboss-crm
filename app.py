@@ -731,7 +731,7 @@ def money_of(row):
     if code in ("budgetedrevenue", "resolvedbudgetedrevenue", "totalprice", "estimatedprice", "budgetedcost"):
         total += money_of(row.get("value"))
     for key, value in row.items():
-        if key.lower() in ("budgetedrevenue", "resolvedbudgetedrevenue", "totalprice", "estimatedprice", "total", "amount", "grandtotal"):
+        if key.lower() in ("budgetedrevenue", "resolvedbudgetedrevenue", "totalprice", "estimatedprice", "total", "amount", "grandtotal", "displayvalue", "display"):
             total += money_of(value)
         elif isinstance(value, (dict, list)):
             total += money_of(value)
@@ -757,16 +757,15 @@ async def dashboard(request: Request):
         rows = flex_records(body) if status < 400 else []
         detail = f"{status_name} {status}/{len(rows)}"
         amount = 0
-        if rows:
-            sample = rows[0].get("id")
-            for code in ("budgetedRevenue", "resolvedBudgetedRevenue", "totalPrice", "estimatedPrice"):
-                h_status, h_body = await flex_get(f"/element/{sample}/header-data", {"codeList": code})
-                if h_status < 400 and money_of(h_body):
-                    amount = 0
-                    for row in rows:
-                        one_status, one_body = await flex_get(f"/element/{row.get('id')}/header-data", {"codeList": code})
-                        if one_status < 400:
-                            amount += money_of(one_body)
+        for row in rows:
+            eid = row.get("id")
+            if not eid:
+                continue
+            for path in (f"/financial-document/{eid}/total-row-data", f"/element/{eid}/header-data"):
+                h_status, h_body = await flex_get(path, {"codeList": "budgetedRevenue"})
+                found = money_of(h_body) if h_status < 400 else 0
+                if found:
+                    amount += found
                     break
         return rows, amount
 
