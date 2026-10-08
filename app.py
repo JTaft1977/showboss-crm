@@ -99,6 +99,19 @@ def init():
           flex_number TEXT,
           updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS sales_leads (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          company TEXT,
+          phone TEXT,
+          email TEXT,
+          source TEXT,
+          flex_id TEXT,
+          stage TEXT NOT NULL,
+          owner TEXT,
+          next_step TEXT,
+          updated_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS contact_notes (
           id INTEGER PRIMARY KEY,
           contact_id TEXT,
@@ -293,6 +306,7 @@ function render() {
     <nav>
       <button data-v="dash" class="${view==='dash'?'on':''}">Dashboard</button>
       <button data-v="pipe" class="${view==='pipe'?'on':''}">Pipeline</button>
+      <button data-v="sales" class="${view==='sales'?'on':''}">Sales</button>
       <button data-v="flow" class="${view==='flow'?'on':''}">Quote Flow</button>
       <button data-v="accounts" class="${view==='accounts'?'on':''}">Accounts</button>
       <button data-v="flex" class="${view==='flex'?'on':''}">Flex</button>
@@ -305,9 +319,10 @@ function render() {
   shell.querySelector("#logout").onclick = async () => { await fetch("/api/logout", {method:"POST"}); me = null; render(); };
   shell.querySelector("#newDeal").onclick = () => dealForm();
   const viewEl = shell.querySelector("#view");
-  const titles = {dash:"Dashboard", pipe:"Pipeline", flow:"Quote Flow", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
+  const titles = {dash:"Dashboard", sales:"Sales", pipe:"Pipeline", flow:"Quote Flow", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
   shell.querySelector("#ttl").textContent = titles[view];
   if (view === "dash") viewEl.append(dash());
+  if (view === "sales") salesView(viewEl);
   if (view === "pipe") pipeHub(viewEl);
   if (view === "flow") quoteFlow(viewEl);
   if (view === "accounts") viewEl.append(accounts());
@@ -372,6 +387,82 @@ function pipeline() {
     board.append(col);
   });
   return el;
+}
+const SALES = ["New", "Attempting", "Connected", "Qualified", "Quote sent", "Won", "Lost"];
+async function salesView(el) {
+  el.innerHTML = `<div class="card" style="padding:14px;margin-bottom:12px">
+    <div class="seg"><button class="ghost on" data-m="board">Board</button><button class="ghost" data-m="import">Import list</button></div>
+    <div class="row"><input id="q" placeholder="Search Flex or type a new lead"><button class="primary" id="find">Add from Flex</button><button class="ghost" id="manual">Add lead</button></div>
+    <div id="pick"></div>
+    <div id="board"></div>
+    <div id="import" style="display:none"><p class="sub">Paste a list. One lead per line: Name, Company, Phone, Email</p><textarea id="csv" rows="8" placeholder="Molly Martin, Louder Exp, 214.578.9655, molly@louderexp.com"></textarea><button class="primary" id="doImport">Import</button></div>
+  </div>`;
+  const board = el.querySelector("#board");
+  const draw = async () => {
+    const res = await api("/api/sales");
+    const leads = res.leads || [];
+    board.innerHTML = `<div class="board">${SALES.map(stage => {
+      const mine = leads.filter(l => l.stage === stage);
+      return `<div class="col"><div class="head"><strong>${stage}</strong><span class="sub">${mine.length}</span></div><div class="cards" data-stage="${stage}">${mine.map(l => `<article class="deal" draggable="true" data-id="${l.id}"><strong>${esc(l.name)}</strong><div class="sub">${esc(l.company||l.source||"")}</div><div>${l.phone?`<a href="tel:${esc(l.phone)}">${esc(l.phone)}</a>`:""}</div><div>${l.email?`<a href="mailto:${esc(l.email)}">${esc(l.email)}</a>`:""}</div><button class="ghost" data-open="${l.id}">Open</button></article>`).join("")}</div></div>`;
+    }).join("")}</div>`;
+    board.querySelectorAll(".deal").forEach(card => {
+      card.ondragstart = (e) => e.dataTransfer.setData("text/plain", card.dataset.id);
+    });
+    board.querySelectorAll(".cards").forEach(box => {
+      box.ondragover = (e) => e.preventDefault();
+      box.ondrop = async (e) => { e.preventDefault(); await api("/api/sales/"+e.dataTransfer.getData("text/plain")+"/stage", {method:"POST", body:{stage: box.dataset.stage}}); draw(); };
+    });
+    board.querySelectorAll("[data-open]").forEach(b => b.onclick = (e) => { e.stopPropagation(); openLead(b.dataset.open, draw); });
+  };
+  el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => {
+    el.querySelectorAll("[data-m]").forEach(x => x.classList.toggle("on", x===b));
+    el.querySelector("#import").style.display = b.dataset.m === "import" ? "block" : "none";
+    board.style.display = b.dataset.m === "import" ? "none" : "block";
+  });
+  el.querySelector("#find").onclick = async () => {
+    const q = el.querySelector("#q").value;
+    const res = await api("/api/flex/search?q=" + encodeURIComponent(q) + "&kind=contact");
+    const pick = el.querySelector("#pick");
+    pick.innerHTML = (res.records||[]).map(r => `<div class="flex-hit"><div><strong>${esc(r.name)}</strong><div class="sub">${esc(r.id||"")}</div></div><button class="primary" data-flex="${esc(r.id)}" data-name="${esc(r.name)}">Add</button></div>`).join("") || `<div class="sub">No Flex contact with that name.</div>`;
+    pick.querySelectorAll("[data-flex]").forEach(b => b.onclick = async () => {
+      await api("/api/sales", {method:"POST", body:{ name: b.dataset.name, flex_id: b.dataset.flex, source: "Flex" }});
+      pick.innerHTML = "";
+      draw();
+    });
+  };
+  el.querySelector("#manual").onclick = async () => {
+    const name = el.querySelector("#q").value || prompt("Lead name");
+    if (!name) return;
+    await api("/api/sales", {method:"POST", body:{ name, source: "Manual" }});
+    draw();
+  };
+  el.querySelector("#doImport").onclick = async () => {
+    await api("/api/sales/import", {method:"POST", body:{ text: el.querySelector("#csv").value }});
+    el.querySelector("#csv").value = "";
+    draw();
+  };
+  draw();
+}
+async function openLead(id, refresh) {
+  const lead = await api("/api/sales/" + id);
+  const box = $(`<div class="modal"><div class="box" style="width:min(680px,94vw)"><h3>${esc(lead.name)}</h3>
+    <div class="sub">${esc(lead.company||"")} · ${esc(lead.source||"")}</div>
+    <div class="kv"><span>Phone</span><div>${lead.phone?`<a href="tel:${esc(lead.phone)}">${esc(lead.phone)}</a>`:"—"}</div><span>Email</span><div>${lead.email?`<a href="mailto:${esc(lead.email)}">${esc(lead.email)}</a>`:"—"}</div><span>Stage</span><div>${esc(lead.stage)}</div></div>
+    <label>Next step<input id="next" value="${esc(lead.next_step||"")}"></label>
+    <h3>Attempts</h3><div id="log"></div>
+    <div class="row"><select id="kind"><option>Called</option><option>LM</option><option>Txt</option><option>Email</option></select><input id="note" placeholder="What happened"></div>
+    <button class="primary" id="save">Save attempt</button> <button class="ghost" id="x">Close</button></div></div>`);
+  const drawLog = (notes) => { box.querySelector("#log").innerHTML = (notes||[]).map(n => `<div class="flex-hit"><div><span class="pill">${esc(n.kind)}</span> ${esc(n.note||"")}<div class="sub">${esc(n.at||"")} · ${esc(n.user_name||"")}</div></div></div>`).join("") || `<div class="sub">No attempts yet.</div>`; };
+  drawLog(lead.notes);
+  box.querySelector("#x").onclick = () => box.remove();
+  box.querySelector("#save").onclick = async () => {
+    await api("/api/sales/"+id+"/note", {method:"POST", body:{ kind: box.querySelector("#kind").value, note: box.querySelector("#note").value, next_step: box.querySelector("#next").value }});
+    const again = await api("/api/sales/" + id);
+    drawLog(again.notes);
+    box.querySelector("#note").value = "";
+    refresh();
+  };
+  document.body.append(box);
 }
 function pipeHub(el) {
   el.innerHTML = `<div class="seg"><button class="ghost on" data-t="inquiry">Inquiry Status</button><button class="ghost" data-t="quiet">Quiet</button></div><div id="pane"></div>`;
@@ -851,6 +942,108 @@ async def call_log(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/sales")
+def sales_list(request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    conn = db()
+    rows = conn.execute("SELECT * FROM sales_leads ORDER BY updated_at DESC").fetchall()
+    conn.close()
+    return {"leads": [dict(r) for r in rows]}
+
+
+@app.get("/api/sales/{lead_id}")
+def sales_one(lead_id: int, request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    conn = db()
+    row = conn.execute("SELECT * FROM sales_leads WHERE id=?", (lead_id,)).fetchone()
+    notes = conn.execute("SELECT kind, note, user_name, at FROM contact_notes WHERE contact_id=? ORDER BY id DESC", (f"lead:{lead_id}",)).fetchall()
+    conn.close()
+    if not row:
+        return JSONResponse({"error": "missing"}, status_code=404)
+    out = dict(row)
+    out["notes"] = [dict(n) for n in notes]
+    return out
+
+
+@app.post("/api/sales")
+async def sales_add(request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    phone, email, company = body.get("phone") or "", body.get("email") or "", body.get("company") or ""
+    if body.get("flex_id") and not phone:
+        status, phones = await flex_get("/phone-number/contact-phone-numbers", {"contactId": body["flex_id"]})
+        status, emails = await flex_get("/internet-address/contact-internet-addresses", {"contactId": body["flex_id"]})
+        phone = first_text(phones, ("phoneNumber", "number", "value", "displayString"))
+        email = first_text(emails, ("internetAddress", "email", "address", "value", "displayString"))
+    conn = db()
+    conn.execute(
+        "INSERT INTO sales_leads (name, company, phone, email, source, flex_id, stage, owner, next_step, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (body.get("name") or "Lead", company, phone, email, body.get("source") or "Manual", body.get("flex_id"), "New", u["name"], "", now()),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/sales/import")
+async def sales_import(request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    for line in (body.get("text") or "").splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if not parts or not parts[0]:
+            continue
+        name = parts[0]
+        company = parts[1] if len(parts) > 1 else ""
+        phone = parts[2] if len(parts) > 2 else ""
+        email = parts[3] if len(parts) > 3 else ""
+        conn.execute(
+            "INSERT INTO sales_leads (name, company, phone, email, source, stage, owner, next_step, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (name, company, phone, email, "Import", "New", u["name"], "", now()),
+        )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/sales/{lead_id}/stage")
+async def sales_stage(lead_id: int, request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    conn.execute("UPDATE sales_leads SET stage=?, updated_at=? WHERE id=?", (body.get("stage"), now(), lead_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/sales/{lead_id}/note")
+async def sales_note(lead_id: int, request: Request):
+    u = user(request)
+    if not u:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    body = await request.json()
+    conn = db()
+    row = conn.execute("SELECT name FROM sales_leads WHERE id=?", (lead_id,)).fetchone()
+    conn.execute(
+        "INSERT INTO contact_notes (contact_id, contact_name, kind, note, user_name, at) VALUES (?,?,?,?,?,?)",
+        (f"lead:{lead_id}", row["name"] if row else "", body.get("kind") or "Called", body.get("note") or "", u["name"], now()),
+    )
+    if body.get("next_step") is not None:
+        conn.execute("UPDATE sales_leads SET next_step=?, updated_at=? WHERE id=?", (body.get("next_step"), now(), lead_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/quotes")
 def quotes(request: Request):
     if not user(request):
@@ -1056,6 +1249,7 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
+
 
 
 
