@@ -321,7 +321,7 @@ function render() {
   const viewEl = shell.querySelector("#view");
   const titles = {dash:"Dashboard", sales:"Sales", pipe:"Pipeline", flow:"Quote Flow", accounts:"Accounts", flex:"Flex Rental Solutions", settings:"Settings"};
   shell.querySelector("#ttl").textContent = titles[view];
-  if (view === "dash") viewEl.append(dash());
+  if (view === "dash") dashView(viewEl);
   if (view === "sales") salesView(viewEl);
   if (view === "pipe") pipeHub(viewEl);
   if (view === "flow") quoteFlow(viewEl);
@@ -344,20 +344,32 @@ function login() {
   };
   return el;
 }
-function dash() {
-  const deals = data.deals || [];
-  const open = deals.filter(d => !["Lost","Delivered","Installed"].includes(d.stage));
-  const el = document.createElement("div");
-  el.innerHTML = `<div class="stats">
-    <div class="stat"><div class="k">Open pipeline</div><div class="v">${money(open.reduce((s,d)=>s+Number(d.value),0))}</div></div>
-    <div class="stat"><div class="k">Deals</div><div class="v">${open.length}</div></div>
-    <div class="stat"><div class="k">Inquiry</div><div class="v amber">${open.filter(d=>d.stage==="Inquiry").length}</div></div>
-    <div class="stat"><div class="k">Confirmed</div><div class="v green">${deals.filter(d=>d.stage==="Confirmed").length}</div></div></div>
-    <div class="card" style="padding:8px 12px"><table><thead><tr><th>Deal</th><th>Line</th><th>Stage</th><th>Value</th><th>Flex</th></tr></thead><tbody>
-    ${deals.map(d=>`<tr class="click" data-id="${d.id}"><td>${esc(d.name)}<div class="sub">${esc(d.account_name||"")}</div></td><td>${d.pipeline}</td><td><span class="pill ${d.stage==="Inquiry"?"inquiry":d.stage==="Confirmed"?"confirmed":""}">${esc(d.stage)}</span></td><td class="money">${money(d.value)}</td><td>${esc(d.flex_number||"—")}</td></tr>`).join("")}
-    </tbody></table></div>`;
-  el.querySelectorAll("[data-id]").forEach(r => r.onclick = () => openDeal(r.dataset.id));
-  return el;
+async function dashView(el) {
+  const paint = (d) => {
+    el.innerHTML = `<div class="card" style="padding:22px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid var(--line);padding-bottom:14px">
+        <div><div class="k">${esc(d.month||"")}</div><div style="font-size:28px;font-weight:700">${esc(d.date||"")}</div></div>
+        <div style="text-align:right"><div class="k">Days left in month</div><div class="v" style="font-size:42px">${d.days_left ?? "—"}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 160px;gap:18px;margin-top:18px">
+        <div>
+          <div class="k">Confirmed</div>
+          <div class="v" style="font-size:40px">${money(d.confirmed_amount)}</div>
+        </div>
+        <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.confirmed_count ?? 0}</div></div>
+        <div>
+          <div class="k">Inquiry</div>
+          <div class="v" style="font-size:40px">${money(d.inquiry_amount)}</div>
+        </div>
+        <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.inquiry_count ?? 0}</div></div>
+      </div>
+      <p class="sub" style="margin-top:14px">Live from Flex for this month. Refreshes every 30 seconds. ${esc(d.detail||"")}</p>
+    </div>`;
+  };
+  paint({ date:"Loading…", days_left:"—" });
+  const load = async () => { try { paint(await api("/api/dashboard")); } catch (e) { paint({ date:"Flex", detail:e.message, confirmed_amount:0, inquiry_amount:0, confirmed_count:0, inquiry_count:0, days_left:"—" }); } };
+  await load();
+  setInterval(load, 30000);
 }
 function pipeline() {
   const stages = data.stages[pipe];
@@ -699,6 +711,56 @@ async def login(request: Request):
 def logout(request: Request):
     request.session.clear()
     return {"ok": True}
+
+
+def money_of(row):
+    if not isinstance(row, dict):
+        return 0
+    for key in ("budgetedRevenue", "resolvedBudgetedRevenue", "total", "amount", "grandTotal"):
+        if row.get(key):
+            try:
+                return float(row[key])
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
+@app.get("/api/dashboard")
+async def dashboard(request: Request):
+    if not user(request):
+        return JSONResponse({"error": "auth"}, status_code=401)
+    from datetime import date
+    import calendar
+    today = date.today()
+    last = calendar.monthrange(today.year, today.month)[1]
+    start = today.replace(day=1).isoformat()
+    end = today.replace(day=last).isoformat()
+    days_left = last - today.day
+    async def pull(status_name):
+        status, body = await flex_get("/v1/elements", {
+            "statusName": status_name,
+            "plannedStartAfter": start,
+            "plannedStartBefore": end,
+            "page": 1,
+            "size": 100,
+        })
+        rows = flex_records(body) if status < 400 else []
+        detail = ""
+        if status >= 400 and isinstance(body, dict):
+            detail = str(body.get("exceptionMessage") or body.get("error") or "")[:160]
+        return rows, detail
+    confirmed, c_detail = await pull("Confirmed")
+    inquiry, i_detail = await pull("Inquiry")
+    return {
+        "date": f"{today.strftime('%B')} {today.day}, {today.year}",
+        "month": today.strftime("%B %Y"),
+        "days_left": days_left,
+        "confirmed_count": len(confirmed),
+        "confirmed_amount": sum(money_of(r) for r in confirmed),
+        "inquiry_count": len(inquiry),
+        "inquiry_amount": sum(money_of(r) for r in inquiry),
+        "detail": c_detail or i_detail,
+    }
 
 
 @app.get("/api/board")
@@ -1249,6 +1311,7 @@ async def flex_search(request: Request, q: str = "", kind: str = "all"):
             seen.add(key)
             records.append(item)
     return {"records": records[:40], "attempts": attempts}
+
 
 
 
