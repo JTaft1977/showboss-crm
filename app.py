@@ -354,16 +354,16 @@ async function dashView(el) {
       <div style="display:grid;grid-template-columns:1fr 160px;gap:18px;margin-top:18px">
         <div>
           <div class="k">Confirmed</div>
-          <div class="v" style="font-size:40px">${money(d.confirmed_amount)}</div>
+          <div class="v" style="font-size:40px">${d.confirmed_count ?? 0} jobs</div>
         </div>
-        <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.confirmed_count ?? 0}</div></div>
+        <div></div>
         <div>
           <div class="k">Inquiry</div>
-          <div class="v" style="font-size:40px">${money(d.inquiry_amount)}</div>
+          <div class="v" style="font-size:40px">${d.inquiry_count ?? 0} jobs</div>
         </div>
-        <div><div class="k">Jobs</div><div class="v" style="font-size:40px">${d.inquiry_count ?? 0}</div></div>
+        <div></div>
       </div>
-      <p class="sub" style="margin-top:14px">Live from Flex. ${esc(d.note||"")}</p>
+      <p class="sub" style="margin-top:14px">Live from Flex. Quote totals stay in Flex for now.</p>
     </div>`;
   };
   paint({ date:"Loading…", days_left:"—" });
