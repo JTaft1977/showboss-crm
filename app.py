@@ -363,10 +363,10 @@ async function dashView(el) {
         </div>
         <div></div>
       </div>
-      <p style="margin-top:18px;font-size:18px;font-weight:700;color:#12171f">Confirmed this week, Monday through Sunday</p>
+      <p style="margin-top:18px;font-size:18px;font-weight:700;color:#12171f">This week, Monday through Sunday</p>
       <div class="sub" style="color:#243044;font-size:15px;margin-bottom:8px">${esc(d.week_label||"")}</div>
-      <table><thead><tr><th>Job</th><th>Number</th><th>Start</th></tr></thead><tbody>
-      ${(d.week_jobs||[]).map(j => `<tr><td>${esc(j.name)}</td><td>${esc(j.documentNumber||"")}</td><td>${esc(j.date||"")}</td></tr>`).join("") || `<tr><td colspan="3">No confirmed jobs this week.</td></tr>`}
+      <table><thead><tr><th>Job</th><th>Status</th><th>Number</th><th>Start</th></tr></thead><tbody>
+      ${(d.week_jobs||[]).map(j => `<tr><td>${esc(j.name)}</td><td>${esc(j.status||"")}</td><td>${esc(j.documentNumber||"")}</td><td>${esc(j.date||"")}</td></tr>`).join("") || `<tr><td colspan="4">No shows this week in those statuses.</td></tr>`}
       </tbody></table>
       <p style="margin-top:14px;color:#243044;font-size:15px">Live from Flex.</p>
     </div>`;
@@ -802,14 +802,27 @@ async def dashboard(request: Request):
     inquiry, i_amount = await pull("Inquiry")
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
+    week_statuses = ("Confirmed", "Invoice Created", "Invoice Paid", "Unpaid Invoice")
     week_jobs = []
-    for row in confirmed:
-        raw = str(row.get("plannedStartDate") or "")[:10]
-        if raw and week_start.isoformat() <= raw <= week_end.isoformat():
+    seen = set()
+    for status_name in week_statuses:
+        rows, _amount = await pull(status_name)
+        for row in rows:
+            raw = str(row.get("plannedStartDate") or "")[:10]
+            if not raw or not (week_start.isoformat() <= raw <= week_end.isoformat()):
+                continue
+            key = row.get("id") or row.get("documentNumber") or row.get("name")
+            if key in seen:
+                continue
+            seen.add(key)
+            label = row.get("status")
+            if isinstance(label, dict):
+                label = label.get("name")
             week_jobs.append({
                 "name": row.get("name") or "Job",
                 "documentNumber": row.get("documentNumber") or "",
                 "date": raw,
+                "status": label or status_name,
             })
     week_jobs.sort(key=lambda item: item["date"])
     return {
