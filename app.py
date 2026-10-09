@@ -257,7 +257,7 @@ nav { display:flex; flex-direction:column; gap:4px; } nav button { text-align:le
 .view { padding:20px 22px 40px; } h2 { margin:0; } .sub { color:var(--muted); font-size:13px; }
 .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
 .stat, .card, .deal, .col { background:#fff; border:1px solid var(--line); border-radius:14px; }
-.stat { padding:14px; } .k { color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; } .v { font-size:24px; font-weight:650; margin-top:4px; color:var(--blue); }
+.stat { padding:14px; } .k { color:#243044; font-size:14px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; } .v { font-size:24px; font-weight:650; margin-top:4px; color:var(--blue); }
 .amber { color:var(--amber); } .green { color:var(--green); }
 .board { display:grid; grid-template-columns:repeat(6,minmax(210px,1fr)); gap:10px; overflow:auto; }
 .col { min-height:380px; background:var(--bg2); } .head { display:flex; justify-content:space-between; padding:10px 12px; font-size:13px; }
@@ -363,7 +363,12 @@ async function dashView(el) {
         </div>
         <div></div>
       </div>
-      <p class="sub" style="margin-top:14px">Live from Flex. Quote totals stay in Flex for now.</p>
+      <p style="margin-top:18px;font-size:18px;font-weight:700;color:#12171f">Confirmed this week, Monday through Sunday</p>
+      <div class="sub" style="color:#243044;font-size:15px;margin-bottom:8px">${esc(d.week_label||"")}</div>
+      <table><thead><tr><th>Job</th><th>Number</th><th>Start</th></tr></thead><tbody>
+      ${(d.week_jobs||[]).map(j => `<tr><td>${esc(j.name)}</td><td>${esc(j.documentNumber||"")}</td><td>${esc(j.date||"")}</td></tr>`).join("") || `<tr><td colspan="3">No confirmed jobs this week.</td></tr>`}
+      </tbody></table>
+      <p style="margin-top:14px;color:#243044;font-size:15px">Live from Flex.</p>
     </div>`;
   };
   paint({ date:"Loading…", days_left:"—" });
@@ -742,7 +747,7 @@ def money_of(row):
 async def dashboard(request: Request):
     if not user(request):
         return JSONResponse({"error": "auth"}, status_code=401)
-    from datetime import date
+    from datetime import date, timedelta
     import calendar
     today = date.today()
     last = calendar.monthrange(today.year, today.month)[1]
@@ -795,6 +800,18 @@ async def dashboard(request: Request):
 
     confirmed, c_amount = await pull("Confirmed")
     inquiry, i_amount = await pull("Inquiry")
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    week_jobs = []
+    for row in confirmed:
+        raw = str(row.get("plannedStartDate") or "")[:10]
+        if raw and week_start.isoformat() <= raw <= week_end.isoformat():
+            week_jobs.append({
+                "name": row.get("name") or "Job",
+                "documentNumber": row.get("documentNumber") or "",
+                "date": raw,
+            })
+    week_jobs.sort(key=lambda item: item["date"])
     return {
         "date": f"{today.strftime('%B')} {today.day}, {today.year}",
         "month": today.strftime("%B %Y"),
@@ -803,6 +820,8 @@ async def dashboard(request: Request):
         "confirmed_amount": c_amount,
         "inquiry_count": len(inquiry),
         "inquiry_amount": i_amount,
+        "week_label": f"{week_start.strftime('%b')} {week_start.day} – {week_end.strftime('%b')} {week_end.day}",
+        "week_jobs": week_jobs,
     }
 
 
